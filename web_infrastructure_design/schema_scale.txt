@@ -1,0 +1,52 @@
+USER -> DNS (www.foobar.com -> A record -> 8.8.8.8)
+
+                 +---------------------------+
+                 |  HAProxy LB #1 (ACTIVE)   |
+                 |  VRRP/Keepalived (VIP)    |
+                 +-------------+-------------+
+                               |
+                 +-------------v-------------+
+                 |  HAProxy LB #2 (PASSIVE)  |
+                 |  same config, shares VIP  |
+                 +-------------+-------------+
+                               |
+                 |<--------- HTTPS --------->|  (LB terminates TLS or re-encrypts)
+                    +-----------+-----------+
+                    |                       |
+           +--------v--------+     +--------v--------+
+           |  Web Server 1   |     |  Web Server 2   |
+           |  Nginx (static) |     |  Nginx (static) |
+           +--------+--------+     +--------+--------+
+                    |                       |
+                    |  proxy (HTTP/uwsgi)   |
+                    |                       |
+           +--------v--------+     +--------v--------+
+           |   App Server 1  |     |   App Server 2  |
+           |  Gunicorn/WSGI  |     |  Gunicorn/WSGI  |
+           +--------+--------+     +--------+--------+
+                    |                       |
+                    |        async writes / reads
+                    |            (ORM/driver)
+                    |                       |
+           +--------v--------+     +--------v--------+
+           |  MySQL PRIMARY  | --> |  MySQL REPLICA  |
+           |  writes & reads |     |  reads, async   |
+           +-----------------+     +-----------------+
+
+Why each extra element?
+- Extra LB (#2) in cluster: removes LB as SPOF (Active/Passive with VRRP VIP).
+- Split Web vs App: isolate concerns, scale tiers independently, better caching & CPU use.
+- Dedicated DB servers: I/O isolation, clear write/replica topology, safer scaling.
+
+LB algo:
+- Round-robin (even spread across similar nodes). Can switch to leastconn if uneven req time.
+
+Active-Active vs Active-Passive:
+- Here LBs run Active-Passive (VIP on one; failover to the other). Active-Active would share traffic simultaneously.
+
+Primary-Replica DB:
+- PRIMARY handles writes; REPLICA gets async replication, serves read traffic; failover promotes replica.
+
+Issues still to mention if asked:
+- TLS only at LB -> plaintext to backends unless re-encrypted (use HTTPS to backends to avoid).
+- Need FW + monitoring + health checks on all tiers.
