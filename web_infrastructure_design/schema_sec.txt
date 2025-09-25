@@ -1,0 +1,67 @@
+USER --> DNS (www.foobar.com -> A record -> 8.8.8.8)
+   |
+   v
++------------------------------+
+| Firewall #1 (LB perimeter)   |
++--------------+---------------+
+               |
+         +-----v-------------------------------+
+         |  HAProxy Load Balancer (HTTPS 443)  |
+         |  - SSL certificate for www.foobar.com
+         |  - Algo: Round-robin (example)     |
+         +-----+--------------------+----------+
+               |                    |
+         (HTTPS to backends)  (HTTPS to backends)
+               |                    |
+   +-----------+-----+     +--------+-----------+
+   |  Firewall #2     |     |   Firewall #3     |
+   +-----------+------+     +--------+----------+
+               |                    |
+     +---------v---------+   +------v----------+
+     |  Web/App Server 1 |   | Web/App Server 2|
+     |  Nginx (443)      |   | Nginx (443)     |
+     |  uWSGI/Gunicorn   |   | uWSGI/Gunicorn  |
+     |  App code         |   | App code        |
+     |  MySQL (REPLICA)  |   | MySQL (PRIMARY) |
+     +---------+---------+   +---------+-------+
+               |  async                 |
+               +----------replication---+
+                             (binlog -> replica)
+
+Monitoring:
+- Each node (LB, S1, S2) runs a monitoring client/agent -> monitoring SaaS
+- Agents ship logs/metrics (CPU, RAM, disk, Nginx, HAProxy, MySQL, app)
+
+Notes (why each element):
+- Firewalls (3): limit ingress/egress; LB: allow 80/443 from Internet (ideally 443 only),
+  backends: allow 443 from LB only; DB ports only inside private network.
+- SSL cert at LB: serve HTTPS to users (confidentiality, integrity, auth).
+- Also keep TLS from LB -> backends to avoid plaintext in DC/LAN.
+- Monitoring agents: collect metrics/logs/events, alerting on SLO/SLA breaches.
+
+Load balancer:
+- Round-robin: sends each new request to next backend in order (even distribution with similar nodes).
+- Active-Active across S1/S2 (both serve traffic); difference vs Active-Passive:
+  * Active-Active: multiple backends take traffic simultaneously.
+  * Active-Passive: one serves, the other is on standby, takes over on failure.
+
+Primary-Replica DB:
+- PRIMARY handles writes; REPLICA(s) receive binlog and apply changes asynchronously.
+- App should send writes to PRIMARY; reads can be offloaded to REPLICA.
+
+How monitoring collects data:
+- Agents tail logs (Nginx/HAProxy/MySQL), scrape/export metrics (node exporter),
+  and push/pull to the monitoring service (HTTP, Syslog, TCP, etc).
+
+How to monitor QPS (web server requests per second):
+- Enable Nginx stub_status or use HAProxy stats; scrape with agent
+  and create a rate() panel/alert (e.g., PromQL) on requests counter.
+
+Issues with this infra (to mention):
+- SSL termination at LB only (if backends use HTTP): plaintext between LB and app servers;
+  fix: use TLS end-to-end (LB->backends HTTPS) or mTLS.
+- Single write-capable MySQL (one PRIMARY): write SPOF; fix: failover/leader election,
+  or use managed HA (semi-sync, MGR, or multi-primary with conflict control).
+- All servers host web + app + DB: blast radius is large, resource contention,
+  patching risk; better to separate concerns (web/app tiers and dedicated DB cluster).
+
