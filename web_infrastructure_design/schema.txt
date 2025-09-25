@@ -1,0 +1,24 @@
+USER  -->  DNS (www.foobar.com -> A record -> 8.8.8.8)
+  |
+  v
++-------------------------+
+|       Server 8.8.8.8    |
+|  - Nginx (web server)   |
+|  - App server           |
+|  - App codebase         |
+|  - MySQL database       |
++-------------------------+
+
+Notes:
+- Server = machine (physique/VM) exécutant des services
+- Domain name (DNS) mappe nom -> IP
+- 'www' = enregistrement DNS (type A)
+- Web server = sert HTTP(S), reverse proxy vers app server
+- App server = logique applicative
+- Database = persistance (MySQL)
+- User <-> server = HTTP(S) sur TCP/IP
+
+Limits:
+- SPOF (un seul serveur)
+- Downtime lors des déploiements/restart
+- Pas de scalabilité si pic de trafic
