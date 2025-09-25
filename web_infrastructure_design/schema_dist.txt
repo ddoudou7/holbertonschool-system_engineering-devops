@@ -1,0 +1,47 @@
+USER --> DNS (www.foobar.com -> A record -> 8.8.8.8)
+
+                +-----------------------------+
+                |  Load Balancer: HAProxy     |
+                |  IP: 8.8.8.8                |
+                |  Algo: Round-robin          |
+                +---------------+-------------+
+                                |
+                 +--------------+--------------+
+                 |                             |
+        +--------v--------+            +-------v---------+
+        |  Server #1      |            |  Server #2      |
+        |  (10.0.0.1)     |            |  (10.0.0.2)     |
+        |-----------------|            |-----------------|
+        | Nginx (web)     |            | Nginx (web)     |
+        | App server      |            | App server      |
+        | App code        |            | App code        |
+        | MySQL (PRIMARY) | <====rep== | MySQL (REPLICA) |
+        +-----------------+     async  +-----------------+
+
+Notes:
+- Why add a load balancer? 
+  * Distributes incoming requests across backend servers -> better availability and horizontal scalability.
+- LB algorithm: Round-robin
+  * Each new request is forwarded to the next backend in a circular order; balances load evenly with similar nodes.
+- Active-Active vs Active-Passive:
+  * Active-Active (used here): both Server #1 and #2 actively serve traffic at the same time.
+  * Active-Passive: one active node serves traffic; the passive node is on standby and takes over on failure.
+- Primary-Replica (Master-Slave) database:
+  * Application WRITES go to PRIMARY (Server #1).
+  * REPLICA (Server #2) receives changes via asynchronous replication and can serve READS.
+  * PRIMARY: authoritative for writes; REPLICA: read-only copy for offloading reads & failover target.
+- App perspective:
+  * PRIMARY node handles writes/transactions requiring strong consistency.
+  * REPLICA node can be used for read-heavy endpoints/reporting to reduce load on PRIMARY.
+
+Issues (to call out):
+- SPOF:
+  * Single Load Balancer is a SPOF.
+  * PRIMARY DB still a SPOF for writes.
+  * Each server has local app files (no shared/CI-CD artifact store) -> deployment risks.
+- Security:
+  * No firewall shown, no HTTPS termination on LB (traffic not encrypted).
+- Monitoring:
+  * No metrics/log aggregation/alerting (no Prometheus, ELK, etc.).
+- Deployments:
+  * Potential downtime if Nginx/App restart on each node without rolling deploy / health checks.
